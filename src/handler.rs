@@ -3,7 +3,14 @@ use hyper::StatusCode;
 use serde::Deserialize;
 
 pub async fn test_handler(ctx: Context) -> String {
-    format!("test called, state_thing was: {}", ctx.state.state_thing)
+    let state = ctx.state.lock().unwrap();
+    format!("test called, state_thing was: {}", state.state_thing)
+}
+
+pub async fn counter_handler(ctx: Context) -> String {
+    let mut state = ctx.state.lock().unwrap();
+    state.counter = state.counter + 1;
+    format!("Counter is now at {}", state.counter)
 }
 
 #[derive(Deserialize)]

@@ -6,7 +6,7 @@ use hyper::{
 };
 use route_recognizer::Params;
 use router::Router;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 mod handler;
 mod router;
@@ -17,24 +17,33 @@ type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub state_thing: String,
+    pub counter: u64,
 }
 
 #[tokio::main]
 async fn main() {
-    let some_state = "state".to_string();
 
     let mut router: Router = Router::new();
+
     router.get("/test", Box::new(handler::test_handler));
+    router.get("/counter", Box::new(handler::counter_handler));
     router.post("/send", Box::new(handler::send_handler));
     router.get("/params/:some_param", Box::new(handler::param_handler));
 
     let shared_router = Arc::new(router);
+
+    // Create our initial AppState
+    let app_state = Arc::new(Mutex::new(AppState {
+        state_thing: "state".to_string(),
+        counter: 0,
+    }));
+
+    // Create a closure that creates a service from our handler and state
     let new_service = make_service_fn(move |_| {
-        let app_state = AppState {
-            state_thing: some_state.clone(),
-        };
 
         let router_capture = shared_router.clone();
+        let app_state = app_state.clone();
+
         async {
             Ok::<_, Error>(service_fn(move |req| {
                 route(router_capture.clone(), req, app_state.clone())
@@ -46,12 +55,13 @@ async fn main() {
     let server = Server::bind(&addr).serve(new_service);
     println!("Listening on http://{}", addr);
     let _ = server.await;
+
 }
 
 async fn route(
     router: Arc<Router>,
     req: Request<hyper::Body>,
-    app_state: AppState,
+    app_state: Arc<Mutex<AppState>>,
 ) -> Result<Response, Error> {
     let found_handler = router.route(req.uri().path(), req.method());
     let resp = found_handler
@@ -63,14 +73,14 @@ async fn route(
 
 #[derive(Debug)]
 pub struct Context {
-    pub state: AppState,
+    pub state: Arc<Mutex<AppState>>,
     pub req: Request<Body>,
     pub params: Params,
     body_bytes: Option<Bytes>,
 }
 
 impl Context {
-    pub fn new(state: AppState, req: Request<Body>, params: Params) -> Context {
+    pub fn new(state: Arc<Mutex<AppState>>, req: Request<Body>, params: Params) -> Context {
         Context {
             state,
             req,
