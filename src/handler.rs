@@ -11,7 +11,7 @@ pub async fn counter_handler(ctx: Context) -> Response {
     let mut state = ctx.state.lock().unwrap();
 
     state.counter = state.counter + 1;
-    let body = format!("Counter is now at {}", state.counter);
+    let body = format!("Socket address: {}\nCounter is now at {}", ctx.sock_addr, state.counter);
 
     hyper::Response::builder()
         .status(200)

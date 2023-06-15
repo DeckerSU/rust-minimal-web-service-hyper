@@ -2,11 +2,11 @@ use bytes::Bytes;
 use hyper::{
     body::to_bytes,
     service::{make_service_fn, service_fn},
-    Body, Request, Server,
+    Body, Request, Server, server::conn::AddrStream,
 };
 use route_recognizer::Params;
 use router::Router;
-use std::sync::{Arc, Mutex};
+use std::{sync::{Arc, Mutex}, net::SocketAddr};
 
 mod handler;
 mod router;
@@ -39,14 +39,16 @@ async fn main() {
     }));
 
     // Create a closure that creates a service from our handler and state
-    let new_service = make_service_fn(move |_| {
+    let new_service = make_service_fn(move |conn: &AddrStream| {
+
+        let sock_addr = conn.remote_addr();
 
         let router_capture = shared_router.clone();
         let app_state = app_state.clone();
 
-        async {
+        async move {
             Ok::<_, Error>(service_fn(move |req| {
-                route(router_capture.clone(), req, app_state.clone())
+                route(router_capture.clone(), req, app_state.clone(), sock_addr.clone())
             }))
         }
     });
@@ -62,11 +64,13 @@ async fn route(
     router: Arc<Router>,
     req: Request<hyper::Body>,
     app_state: Arc<Mutex<AppState>>,
+    sock_addr: SocketAddr,
 ) -> Result<Response, Error> {
+
     let found_handler = router.route(req.uri().path(), req.method());
     let resp = found_handler
         .handler
-        .invoke(Context::new(app_state, req, found_handler.params))
+        .invoke(Context::new(app_state, req, found_handler.params, sock_addr))
         .await;
     Ok(resp)
 }
@@ -77,15 +81,17 @@ pub struct Context {
     pub req: Request<Body>,
     pub params: Params,
     body_bytes: Option<Bytes>,
+    pub sock_addr: SocketAddr,
 }
 
 impl Context {
-    pub fn new(state: Arc<Mutex<AppState>>, req: Request<Body>, params: Params) -> Context {
+    pub fn new(state: Arc<Mutex<AppState>>, req: Request<Body>, params: Params, sock_addr: SocketAddr) -> Context {
         Context {
             state,
             req,
             params,
             body_bytes: None,
+            sock_addr,
         }
     }
 
