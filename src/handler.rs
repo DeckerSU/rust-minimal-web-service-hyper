@@ -1,5 +1,5 @@
 use crate::{Context, Response};
-use hyper::StatusCode;
+use hyper::{StatusCode, Body};
 use serde::Deserialize;
 
 pub async fn test_handler(ctx: Context) -> String {
@@ -7,10 +7,17 @@ pub async fn test_handler(ctx: Context) -> String {
     format!("test called, state_thing was: {}", state.state_thing)
 }
 
-pub async fn counter_handler(ctx: Context) -> String {
+pub async fn counter_handler(ctx: Context) -> Response {
     let mut state = ctx.state.lock().unwrap();
+
     state.counter = state.counter + 1;
-    format!("Counter is now at {}", state.counter)
+    let body = format!("Counter is now at {}", state.counter);
+
+    hyper::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/plain")
+        .body(Body::from(body))
+        .unwrap()
 }
 
 #[derive(Deserialize)]
