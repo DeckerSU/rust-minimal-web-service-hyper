@@ -35,7 +35,7 @@ curl -X POST http://localhost:8080/send -d '{"name": "chip", "active": true }'
 
     Also, example of working `tokio::net::TcpListener` exists in Hyper [1.0 guides](https://hyper.rs/guides/1/server/hello-world/) and `hyper::Server` introduced in [0.14 guides](https://hyper.rs/guides/0.14/server/hello-world/).
 
-- Here is an example of how to change the `AppState` in Hyper
+- Here is an example of how to change the `AppState` in Hyper:
 
     ```rust
     use hyper::service::{make_service_fn, service_fn};
@@ -98,5 +98,11 @@ curl -X POST http://localhost:8080/send -d '{"name": "chip", "active": true }'
             eprintln!("server error: {}", e);
         }
     }
+    ```
+
+- Small example of how to do kind of stress-test for such web service:
+
+    ```bash
+    siege -c 100 -r 1000 -v http://localhost:8080/counter
     ```
 
