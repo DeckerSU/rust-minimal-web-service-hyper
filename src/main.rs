@@ -1,15 +1,18 @@
-use bytes::Bytes;
 use hyper::{
     body::to_bytes,
     service::{make_service_fn, service_fn},
-    Body, Request, Server, server::conn::AddrStream,
+    Body, Request, Server, server::{conn::{AddrStream, AddrIncoming}, accept::Accept},
 };
 use route_recognizer::Params;
 use router::Router;
-use std::{sync::{Arc, Mutex}, net::SocketAddr};
+use rustls::ServerConfig;
+// use tokio_rustls::TlsAcceptor;
+use std::{sync::{Arc, Mutex}, net::SocketAddr, fs::File, io::BufReader, pin::Pin};
+use rustls_pemfile as pemfile;
 
 mod handler;
 mod router;
+mod tls;
 
 type Response = hyper::Response<hyper::Body>;
 type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -21,7 +24,7 @@ pub struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut router: Router = Router::new();
 
@@ -38,8 +41,36 @@ async fn main() {
         counter: 0,
     }));
 
+    // openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365
+
+    // https://github.com/svenstaro/miniserve/blob/990bfaebdcc11f01a609d2034fb7876f4799f681/src/config.rs
+    // https://github.com/KomodoPlatform/atomicDEX-API/pull/1861/files#diff-25baee98803ce2de15ee914b54676998e353d0fed81e51c5efb83756e260cabd
+    // https://github.com/SergioBenitez/Rocket/blob/9a9cd76c0121f46765ff0df9ef81e36563a2a31f/core/http/src/tls/listener.rs#L96
+    // http://zderadicka.eu/hyper-and-tls/
+    // https://github.com/izderadicka/audioserve
+
+    // Create a `rustls::ServerConfig` with the self-signed certificate and key
+    let cert_file = &mut BufReader::new(File::open("cert.pem")?);
+    let key_file = &mut BufReader::new(File::open("key.pem")?);
+    let cert_chain = pemfile::certs(cert_file)?;
+    let key = pemfile::read_all(key_file)?.into_iter().find_map(|item| match item {
+        pemfile::Item::RSAKey(key)
+        | pemfile::Item::PKCS8Key(key)
+        | pemfile::Item::ECKey(key) => Some(key),
+        _ => None,
+    }).ok_or("No supported private key in file".to_string())?;
+
+    // Create a `rustls::ServerConfig` with the self-signed certificate and key
+    let tls_config = ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain.into_iter().map(rustls::Certificate).collect(), rustls::PrivateKey(key))?;
+
+    
+    //let new_service = make_service_fn(move |conn: &AddrStream| {
+
     // Create a closure that creates a service from our handler and state
-    let new_service = make_service_fn(move |conn: &AddrStream| {
+    let new_service = make_service_fn(move |conn: &tls::TlsStream| {
 
         let sock_addr = conn.remote_addr();
 
@@ -53,10 +84,26 @@ async fn main() {
         }
     });
 
-    let addr = "0.0.0.0:8080".parse().expect("address creation works");
-    let server = Server::bind(&addr).serve(new_service);
-    println!("Listening on http://{}", addr);
+    // http
+    // let addr = "0.0.0.0:8080".parse().expect("address creation works");
+    // let server = Server::bind(&addr).serve(new_service);
+
+    // let acceptor = TlsAcceptor::from(Arc::new(tls_config));
+    // We can't use acceptor above, because
+    // the trait `hyper::server::accept::Accept` is not implemented for `tokio_rustls::TlsAcceptor`
+    // https://github.com/hyperium/hyper-tls/issues/25#issuecomment-575635447,
+    // so we will use TlsAcceptor here.
+
+    // https
+    let addr = "0.0.0.0:8443".parse().expect("address creation works");
+    let incoming = AddrIncoming::bind(&addr)?;
+    let tls_acceptor = tls::tls_acceptor(Arc::new(tls_config), incoming);
+    let server = Server::builder(tls_acceptor).serve(new_service);
+
+    println!("Listening on https://{}", addr);
     let _ = server.await;
+
+    Ok(())
 
 }
 
@@ -80,7 +127,7 @@ pub struct Context {
     pub state: Arc<Mutex<AppState>>,
     pub req: Request<Body>,
     pub params: Params,
-    body_bytes: Option<Bytes>,
+    body_bytes: Option<hyper::body::Bytes>,
     pub sock_addr: SocketAddr,
 }
 
